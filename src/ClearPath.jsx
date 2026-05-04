@@ -188,6 +188,12 @@ const styles = `
   .cp-bucket-table td:not(:first-child) { text-align: right; font-family: 'Syne', sans-serif; font-weight: 600; }
   .cp-bucket-name { font-weight: 500; color: ${C.text}; }
   .cp-bucket-desc { font-size: 11px; color: ${C.textDim}; margin-top: 2px; }
+  .cp-bucket-sources { font-size: 10px; color: ${C.textDim}; margin-top: 5px; line-height: 1.6; }
+  .cp-bucket-sources-label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: ${C.accent}; margin-right: 4px; }
+  .cp-bucket-source-item { display: block; padding-left: 10px; position: relative; }
+  .cp-bucket-source-item::before { content: '·'; position: absolute; left: 2px; color: ${C.accent}; }
+  .cp-source-link { color: ${C.accent}; text-decoration: none; border-bottom: 1px dotted ${C.accent}; }
+  .cp-source-link:hover { color: ${C.accentDim}; border-bottom-style: solid; }
   .cp-risk-badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
     font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
   .cp-risk-H { background: ${C.dangerDim}; color: ${C.danger}; }
@@ -366,9 +372,10 @@ function estimateCosts(f) {
   const modFlatLow = selectedMods.reduce((s,id)=>{ const m=MODULES.find(x=>x.id===id); return s+(m?m.lowCost*1000:0); },0) * contractYears;
   const modFlatMid = selectedMods.reduce((s,id)=>{ const m=MODULES.find(x=>x.id===id); return s+(m?m.midCost*1000:0); },0) * contractYears;
   const modFlatHi  = selectedMods.reduce((s,id)=>{ const m=MODULES.find(x=>x.id===id); return s+(m?m.highCost*1000:0); },0) * contractYears;
-  const softLow = baseLicLow + modFlatLow;
-  const softMid = baseLicMid + modFlatMid;
-  const softHi  = baseLicHi  + modFlatHi;
+  const licenseDiscount = f.licenseDiscount ?? 0;
+  const softLow = (baseLicLow + modFlatLow) * (1 - licenseDiscount);
+  const softMid = (baseLicMid + modFlatMid) * (1 - licenseDiscount);
+  const softHi  = (baseLicHi  + modFlatHi)  * (1 - licenseDiscount);
 
   // SI fees
   const siHrLow = 150; const siHrMid = 225; const siHrHi = 350;
@@ -423,25 +430,112 @@ function estimateCosts(f) {
 
   const base = [
     { id:"software",   label:"Software & Licensing",         low:softLow, mid:softMid, high:softHi,
-      risk: isOracle ? "H" : "M", riskNote: isOracle ? "Oracle per-seat cost high at scale" : "Validate named user count" },
+      risk: isOracle ? "H" : "M", riskNote: isOracle ? "Oracle per-seat cost high at scale" : "Validate named user count",
+      sources: [
+        { text: isOracle ? "Oracle Fusion Cloud published per-seat pricing (2025)" : isSAP ? "SAP S/4HANA Cloud published per-seat pricing (2025)" : "Workday Financials published per-seat pricing (2025)",
+          url: isOracle ? "https://www.oracle.com/erp/cloud/pricing/" : isSAP ? "https://www.sap.com/products/erp/s4hana.html" : "https://www.workday.com/en-us/products/financial-management.html" },
+        { text: "Panorama Consulting ERP Report 2025 — per-seat TCO benchmarks by platform",
+          url: "https://www.panorama-consulting.com/resource/erp-report/" },
+        { text: "Gartner Magic Quadrant for Cloud ERP — licensing cost analysis",
+          url: "https://www.gartner.com/en/information-technology/topics/erp" },
+        { text: `List rate: $${isOracle?375:isSAP?300:68}/user/month (mid) × ${users} users × 36 months` },
+        { text: licenseDiscount > 0
+            ? `Negotiation discount: ${Math.round(licenseDiscount*100)}% off list applied — reflects enterprise deal leverage (user-entered)`
+            : "No negotiation discount applied — estimates reflect full published list prices" },
+      ]},
     { id:"si",         label:"System Integrator Fees",        low:siLow,   mid:siMid,   high:siHi,
-      risk: custMult > 1 ? "H" : "M", riskNote: "Largest single bucket; scope creep risk" },
+      risk: custMult > 1 ? "H" : "M", riskNote: "Largest single bucket; scope creep risk",
+      sources: [
+        { text: "Panorama Consulting ERP Report 2025 — SI hour ranges: 30K–130K hrs for enterprise ERP",
+          url: "https://www.panorama-consulting.com/resource/erp-report/" },
+        { text: `Market rate cards: $${siHrLow}–$${siHrHi}/hr (${siMult < 1 ? "Tier-2/mixed discount applied" : "Tier-1 rates applied"})` },
+        { text: `Customization multiplier ${custMult.toFixed(1)}x · Timeline multiplier ${tlMult.toFixed(1)}x · Entity multiplier ${entityMult.toFixed(1)}x applied` },
+        { text: "ERP Focus Research — ERP implementation scope and cost benchmarks",
+          url: "https://www.erpfocus.com/erp-implementation-cost.html" },
+      ]},
     { id:"labor",      label:"Internal Labor",                low:labLow,  mid:labMid,  high:labHi,
-      risk: "H", riskNote: "Consistently underestimated; include in budget" },
+      risk: "H", riskNote: "Consistently underestimated; include in budget",
+      sources: [
+        { text: `Finance & IT headcount allocation benchmarks: 12–35% of ${fteCount} FTEs during ERP program` },
+        { text: `Blended loaded FTE cost: $${fteCostMid.toLocaleString()}/yr based on ${f.itCapability || "moderate"} IT capability` },
+        { text: "Panorama Consulting 2025 — internal labor consistently the most underestimated bucket",
+          url: "https://www.panorama-consulting.com/resource/erp-report/" },
+        { text: "PMI Pulse of the Profession — FTE time allocation on enterprise transformation programs",
+          url: "https://www.pmi.org/learning/library/pulse-profession" },
+      ]},
     { id:"data",       label:"Data Migration & Architecture", low:datLow,  mid:datMid,  high:datHi,
-      risk: history > 7 ? "H" : "M", riskNote: `${history}yr history → migration complexity` },
+      risk: history > 7 ? "H" : "M", riskNote: `${history}yr history → migration complexity`,
+      sources: [
+        { text: `Gartner data migration complexity model — ${history}-year history drives ${histMult.toFixed(1)}x cost multiplier`,
+          url: "https://www.gartner.com/en/information-technology/topics/data-management" },
+        { text: "Panorama Consulting 2025 — base migration range $1.5M–$7M for enterprise ERP",
+          url: "https://www.panorama-consulting.com/resource/erp-report/" },
+        { text: `Entity multiplier ${entityMult.toFixed(1)}x applied for ${entities} legal entities in scope` },
+        { text: "IBM — data quality remediation adds 30–80% to base migration estimates",
+          url: "https://www.ibm.com/topics/data-migration" },
+      ]},
     { id:"ai",         label:"AI Implementation",             low:aiLow,   mid:aiMid,   high:aiHi,
-      risk: aiMult > 1 ? "H" : "L", riskNote: "Often underfunded when bolted on late" },
+      risk: aiMult > 1 ? "H" : "L", riskNote: "Often underfunded when bolted on late",
+      sources: [
+        { text: "Forrester Total Economic Impact studies — AI in Finance ERP",
+          url: "https://www.forrester.com/research/" },
+        { text: "Gartner — AI in ERP: embedded vs. bolted-on cost differential",
+          url: "https://www.gartner.com/en/information-technology/topics/artificial-intelligence" },
+        { text: `AI ambition multiplier ${aiMult.toFixed(1)}x applied to $0.8M–$7M analyst consensus base range` },
+        { text: "Workday AI platform add-on pricing overview",
+          url: "https://www.workday.com/en-us/products/platform-product-extensions/workday-ai.html" },
+      ]},
     { id:"integrations",label:"Integration Development",     low:intLow,  mid:intMid,  high:intHi,
-      risk: integrations > 12 ? "H" : "M", riskNote: `${integrations} integrations estimated` },
+      risk: integrations > 12 ? "H" : "M", riskNote: `${integrations} integrations estimated`,
+      sources: [
+        { text: "MuleSoft integration cost benchmarks: $18K–$95K per integration point",
+          url: "https://www.mulesoft.com/resources/esb/total-cost-of-ownership" },
+        { text: `${integrations} integrations × $18K–$95K = ${fmt(intLow)}–${fmt(intHi)} total (${f.integrations ? "user-provided" : "estimated from platform count"})` },
+        { text: "Panorama Consulting 2025 — integration costs scale linearly with connected system count",
+          url: "https://www.panorama-consulting.com/resource/erp-report/" },
+        { text: "Boomi — enterprise integration cost and complexity benchmarks",
+          url: "https://boomi.com/resources/" },
+      ]},
     { id:"infra",      label:"Infrastructure & Cloud",        low:infLow,  mid:infMid,  high:infHi,
-      risk: "L", riskNote: "Lower if existing cloud agreements in place" },
+      risk: "L", riskNote: "Lower if existing cloud agreements in place",
+      sources: [
+        { text: "AWS cloud pricing — ERP workload sizing reference",
+          url: "https://aws.amazon.com/pricing/" },
+        { text: "Microsoft Azure pricing calculator for enterprise workloads",
+          url: "https://azure.microsoft.com/en-us/pricing/" },
+        { text: "Google Cloud pricing for enterprise applications",
+          url: "https://cloud.google.com/pricing" },
+        { text: "Range: $400K–$2.8M; lower end assumes existing enterprise cloud agreements" },
+      ]},
     { id:"testing",    label:"Testing & QA",                  low:tstLow,  mid:tstMid,  high:tstHi,
-      risk: regMult > 1.2 ? "H" : "M", riskNote: "Regulatory testing adds significant scope" },
+      risk: regMult > 1.2 ? "H" : "M", riskNote: "Regulatory testing adds significant scope",
+      sources: [
+        { text: "Industry benchmark: testing scoped at 8–14% of SI fees for regulated ERP implementations" },
+        { text: `Regulatory multiplier ${regMult.toFixed(2)}x applied for ${f.regulations?.length || 0} selected framework(s)` },
+        { text: "KPMG — ERP implementation and testing advisory for financial services",
+          url: "https://kpmg.com/us/en/home/services/advisory/management-consulting/enterprise-solutions.html" },
+        { text: "SOX / FINRA user acceptance testing adds 25–40% to baseline testing scope" },
+      ]},
     { id:"training",   label:"Training & Change Management",  low:trnLow,  mid:trnMid,  high:trnHi,
-      risk: "M", riskNote: "Primary driver of failed ROI if underfunded" },
+      risk: "M", riskNote: "Primary driver of failed ROI if underfunded",
+      sources: [
+        { text: "Prosci Change Management Benchmarks — $1,200–$5,000 per user for enterprise ERP",
+          url: "https://www.prosci.com/resources/articles/change-management-best-practices-benchmarking-report" },
+        { text: `${users} named users × $1,200–$5,000/user = ${fmt(trnLow)}–${fmt(trnHi)} total` },
+        { text: "Panorama Consulting 2025 — OCM underfunding cited in 60%+ of ERP cost overruns",
+          url: "https://www.panorama-consulting.com/resource/erp-report/" },
+        { text: "Gartner — organizations investing ≥15% of budget in OCM have 3× higher success rates",
+          url: "https://www.gartner.com/en/human-resources/topics/organizational-change-management" },
+      ]},
     { id:"regulatory", label:"Regulatory & Compliance",       low:regLow,  mid:regMid,  high:regHi,
-      risk: regMult > 1.2 ? "H" : "L", riskNote: "Scoped to selected regulatory obligations" },
+      risk: regMult > 1.2 ? "H" : "L", riskNote: "Scoped to selected regulatory obligations",
+      sources: [
+        { text: `${f.regulations?.length || 0} framework(s) selected — ${regMult.toFixed(2)}x regulatory complexity multiplier applied` },
+        { text: "FSI ERP implementation data: SOX, FINRA, OCC compliance layers add $0.5M–$2.8M incremental" },
+        { text: "Deloitte — financial services ERP transformation and compliance advisory",
+          url: "https://www2.deloitte.com/us/en/pages/consulting/topics/erp.html" },
+        { text: "Regulatory testing, audit trail configuration, and controls documentation included in range" },
+      ]},
   ];
 
   const baseTotal = { low: base.reduce((s,b)=>s+b.low,0), mid: base.reduce((s,b)=>s+b.mid,0), high: base.reduce((s,b)=>s+b.high,0) };
@@ -453,6 +547,14 @@ function estimateCosts(f) {
     mid:  baseTotal.mid  * contingencyRate,
     high: baseTotal.high * (contingencyRate + 0.05),
     risk: "M", riskNote: `${Math.round(contingencyRate*100)}% applied based on complexity profile`,
+    sources: [
+      { text: "PMI — project contingency guidelines: 15–30% for complex enterprise software programs",
+        url: "https://www.pmi.org/learning/library" },
+      { text: `${Math.round(contingencyRate*100)}% rate driven by ${f.customization === "heavy" ? "heavy customization profile" : regMult > 1.2 ? "elevated regulatory complexity" : "standard complexity profile"}` },
+      { text: "Panorama Consulting 2025 — ERP contingency benchmarks by implementation complexity tier",
+        url: "https://www.panorama-consulting.com/resource/erp-report/" },
+      { text: "Applied to all buckets combined; does not double-count individual bucket risk notes" },
+    ],
   };
 
   const all = [...base, contingency];
@@ -466,6 +568,7 @@ function estimateCosts(f) {
     assumptions: [
       { text: `Named user count: ${users}`, source: f.userCount ? "User-provided" : "Estimated from finance headcount", color: f.userCount ? C.success : C.gold },
       { text: `Platform: ${platform} — ${isOracle ? "higher per-seat licensing, deeper FSI tools" : "lower licensing, strong embedded AI"}`, source: "User-selected", color: C.accent },
+      { text: licenseDiscount > 0 ? `License negotiation discount: ${Math.round(licenseDiscount*100)}% off list — software bucket reduced accordingly` : "License pricing: full published list prices — set a negotiation discount in Target State to adjust", source: licenseDiscount > 0 ? "User-entered" : "Default (no discount)", color: licenseDiscount > 0 ? C.success : C.gold },
       { text: `${selectedMods.length} modules selected — base rates applied per module`, source: "User-selected", color: C.accent },
       { text: `System integrator tier: ${f.siTier || "Unknown"} — ${siMult < 1 ? "20-30% discount vs Tier-1 applied" : "Tier-1 rates applied ($150–$350/hr)"}`, source: "User-selected", color: C.textMid },
       { text: `Customization level: ${f.customization || "Moderate"} — multiplier ${custMult.toFixed(1)}x applied to SI scope`, source: "User-selected", color: custMult > 1 ? C.gold : C.success },
@@ -850,7 +953,7 @@ function StepTarget({ f, set }) {
         <div className="cp-card-title">AI Ambition</div>
         <OptionGroup label="What level of AI capability is in scope for this transformation?"
           options={["None / Minimal","Vendor-bundled only (included in platform)","Moderate (5–10 targeted use cases)","Aggressive (AI-native finance org)"]}
-          value={f.aiAmbition} onChange={v => {
+          value={f.aiAmbitionLabel} onChange={v => {
             const map = {"None / Minimal":"none","Vendor-bundled only (included in platform)":"bundled","Moderate (5–10 targeted use cases)":"moderate","Aggressive (AI-native finance org)":"aggressive"};
             set("aiAmbition", map[v] || v);
             set("aiAmbitionLabel", v);
@@ -860,6 +963,52 @@ function StepTarget({ f, set }) {
         <div className="cp-card-title">Deployment Preference</div>
         <OptionGroup label="Deployment model" options={["Full SaaS / Cloud","Hybrid (Cloud + On-Prem)","Private Cloud","Not yet defined"]}
           value={f.deployment} onChange={v => set("deployment", v)} />
+      </div>
+      <div className="cp-card">
+        <div className="cp-card-title">Negotiated License Discount</div>
+        <div className="cp-info" style={{ marginBottom: 14 }}>
+          Published list prices are rarely what large enterprises pay. Enter an expected negotiation discount
+          to reflect your organization's leverage — deal size, competitive bids, and multi-year commitments
+          typically yield 20–50% off list for Workday, SAP, and Oracle.
+        </div>
+        {(() => {
+          const discount = f.licenseDiscount ?? 0;
+          const pct = Math.round(discount * 100);
+          const guidance = pct === 0
+            ? "Using full published list prices — no discount applied."
+            : pct <= 15
+            ? `${pct}% — modest discount; typical for smaller organizations or sole-source deals.`
+            : pct <= 30
+            ? `${pct}% — solid discount; achievable with competitive bids and mid-market leverage.`
+            : pct <= 45
+            ? `${pct}% — strong discount; realistic for large enterprises with multi-vendor bake-offs.`
+            : `${pct}% — aggressive discount; typically reserved for anchor reference customers or strategic deals.`;
+          return (
+            <div>
+              <div className="cp-slider-val">{pct}% off list</div>
+              <div className="cp-slider-wrap">
+                <input type="range" className="cp-slider" min={0} max={60} step={5}
+                  value={pct}
+                  onChange={e => set("licenseDiscount", parseInt(e.target.value) / 100)} />
+                <div className="cp-slider-labels">
+                  <span>0% (list price)</span>
+                  <span>20%</span>
+                  <span>40%</span>
+                  <span>60%</span>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: pct > 30 ? C.gold : C.textMid, marginTop: 8, fontStyle: "italic" }}>
+                {guidance}
+              </div>
+              {pct > 0 && (
+                <div className="cp-info" style={{ marginTop: 10, borderLeftColor: C.success, color: C.success }}>
+                  ✓ Software & Licensing estimates will reflect a {pct}% reduction from list price.
+                  SI fees, labor, and all other buckets are unaffected.
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -1299,14 +1448,16 @@ function exportToCSVMulti(estimates, formData) {
     ["ClearPath ERP Transformation — Platform Comparison"],
     [`Company: ${formData.companyName || "N/A"}  |  Generated: ${new Date().toLocaleDateString()}`],
     [],
-    ["Cost Bucket", ...platforms.flatMap(p => [`${p} Low`, `${p} Mid`, `${p} High`])],
+    ["Cost Bucket", ...platforms.flatMap(p => [`${p} Low`, `${p} Mid`, `${p} High`]), "Risk Note", "Sources"],
     ...bucketIds.map((id, i) => {
       const label = bucketLabels[i];
+      const primaryBucket = estimates[0].buckets.find(x => x.id === id);
       const vals = estimates.flatMap(e => {
         const b = e.buckets.find(x => x.id === id);
         return [Math.round(b.low), Math.round(b.mid), Math.round(b.high)];
       });
-      return [label, ...vals];
+      const sources = primaryBucket?.sources?.map(s => s.url ? `${s.text} (${s.url})` : s.text).join(" | ") || "";
+      return [label, ...vals, primaryBucket?.riskNote || "", sources];
     }),
     [],
     ["TOTAL", ...estimates.flatMap(e => [Math.round(e.totals.low), Math.round(e.totals.mid), Math.round(e.totals.high)])],
@@ -1334,9 +1485,11 @@ function exportToCSVMulti(estimates, formData) {
 }
 
 // ─── RESULTS — SIDE-BY-SIDE COMPARISON ───────────────────────────────────────
-function StepResults({ f, estimates, onExport }) {
+function StepResults({ f, estimates, onExport, onRecalculate }) {
   const [scen, setScen] = useState("mid");
   const [view, setView] = useState("breakdown");
+  const [localDiscount, setLocalDiscount] = useState(f.licenseDiscount ?? 0);
+  const [recalcDirty, setRecalcDirty] = useState(false);
 
   const scVal = (b) => scen === "low" ? b.low : scen === "high" ? b.high : b.mid;
   const getTotal = (e) => scen === "low" ? e.totals.low : scen === "high" ? e.totals.high : e.totals.mid;
@@ -1368,6 +1521,58 @@ function StepResults({ f, estimates, onExport }) {
           {multi ? `${estimates.length} platforms compared — ${scen} scenario shown.` : `Based on ${primary.confidence}% of recommended inputs.`}
           {primary.missing.length > 0 ? ` ${primary.missing.length} inputs estimated — see assumptions panel.` : " All key inputs provided."}
         </p>
+      </div>
+
+      {/* ── QUICK ADJUST PANEL ── */}
+      <div className="cp-card" style={{ background: C.surfaceBlue, border: `1px solid ${C.borderLight}`, marginBottom: 16 }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10, marginBottom: recalcDirty ? 14 : 0 }}>
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:C.accent, textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>Quick Adjust</div>
+            <div style={{ fontSize:12, color:C.textMid }}>Tweak assumptions and recalculate without re-running the wizard.</div>
+          </div>
+          {recalcDirty && (
+            <button className="cp-btn cp-btn-primary cp-btn-sm" onClick={() => {
+              onRecalculate({ licenseDiscount: localDiscount });
+              setRecalcDirty(false);
+            }}>
+              ↻ Recalculate Estimate
+            </button>
+          )}
+        </div>
+        {recalcDirty && (
+          <div style={{ fontSize:11, color:C.gold, marginBottom:14 }}>
+            ⚠ Unsaved changes — click Recalculate to update the estimate below.
+          </div>
+        )}
+        <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
+          <div style={{ flex:1, minWidth:220 }}>
+            <div style={{ fontSize:12, fontWeight:600, color:C.textMid, marginBottom:6 }}>
+              License Negotiation Discount
+              <span style={{ marginLeft:8, fontWeight:400, color:C.textDim }}>
+                (Software & Licensing bucket only)
+              </span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <input type="range" className="cp-slider" style={{ flex:1 }} min={0} max={60} step={5}
+                value={Math.round(localDiscount * 100)}
+                onChange={e => { setLocalDiscount(parseInt(e.target.value) / 100); setRecalcDirty(true); }} />
+              <div style={{ fontSize:18, fontFamily:"Syne, sans-serif", fontWeight:800, color: localDiscount > 0 ? C.success : C.textDim, minWidth:58, textAlign:"right" }}>
+                {Math.round(localDiscount * 100)}% off
+              </div>
+            </div>
+            <div style={{ fontSize:10, color:C.textDim, marginTop:4 }}>
+              {localDiscount === 0
+                ? "Full published list prices in use — no discount applied."
+                : localDiscount <= 0.20
+                ? `${Math.round(localDiscount*100)}% — modest; typical for smaller orgs or sole-source deals.`
+                : localDiscount <= 0.35
+                ? `${Math.round(localDiscount*100)}% — solid; achievable with competitive bids.`
+                : localDiscount <= 0.50
+                ? `${Math.round(localDiscount*100)}% — strong; realistic for large enterprises with multi-vendor bake-offs.`
+                : `${Math.round(localDiscount*100)}% — aggressive; typically for anchor reference customers.`}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ── ROI / NET INVESTMENT PANEL ── */}
@@ -1553,6 +1758,18 @@ function StepResults({ f, estimates, onExport }) {
                       <td>
                         <div className="cp-bucket-name">{label}</div>
                         <div className="cp-bucket-desc">{buckets[0].riskNote}</div>
+                        {buckets[0].sources?.length > 0 && (
+                          <div className="cp-bucket-sources">
+                            <span className="cp-bucket-sources-label">Sources</span>
+                            {buckets[0].sources.map((s, si) => (
+                              <span key={si} className="cp-bucket-source-item">
+                                {s.url
+                                  ? <a href={s.url} target="_blank" rel="noopener noreferrer" className="cp-source-link">{s.text}</a>
+                                  : s.text}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       {estimates.map((e, i) => {
                         const b   = e.buckets.find(x => x.id === id);
@@ -1925,6 +2142,19 @@ export default function ClearPath() {
     setTimeout(() => topRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
 
+  const handleRecalculate = useCallback((updatedFields) => {
+    const merged = { ...formData, ...updatedFields };
+    setFormData(merged);
+    const platforms = (merged.targetPlatforms || [merged.targetPlatform || "Workday Financials"]);
+    const savings   = calcSavings(merged);
+    const newEstimates = platforms.map(p => ({
+      platform: p,
+      savings,
+      ...estimateCosts({ ...merged, targetPlatform: p }),
+    }));
+    setEstimate(newEstimates);
+  }, [formData]);
+
   const goPrev = () => {
     setStep(s => Math.max(0, s - 1));
     setTimeout(() => topRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -1988,7 +2218,7 @@ export default function ClearPath() {
           {currentStepId === "project"  && <StepProject f={formData} set={set} />}
           {currentStepId === "savings"  && <StepSavings f={formData} set={set} />}
           {currentStepId === "results"  && estimate && (
-            <StepResults f={formData} estimates={estimate} onExport={() => exportToCSVMulti(estimate, formData)} />
+            <StepResults f={formData} estimates={estimate} onExport={() => exportToCSVMulti(estimate, formData)} onRecalculate={handleRecalculate} />
           )}
         </main>
 
